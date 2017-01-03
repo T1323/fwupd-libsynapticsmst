@@ -1,0 +1,85 @@
+/* -*- Mode: C; tab-width: 8; indent-tabs-mode: t; c-basic-offset: 8 -*-
+ *
+ * Copyright (C) 2015 Richard Hughes <richard@hughsie.com>
+ * Copyright (C) 2016 Mario Limonciello <mario.limonciello@dell.com>
+ *
+ * Licensed under the GNU Lesser General Public License Version 2.1
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
+ */
+
+#ifndef __SYNAPTICSMST_COMMON_H
+#define __SYNAPTICSMST_COMMON_H
+
+//#include <glib.h>
+#define ADDR_CUSTOMER_ID        0X10E
+#define ADDR_BOARD_ID           0x10F
+
+#define REG_RC_CAP              0x4B0
+#define REG_RC_STATE            0X4B1
+#define REG_RC_CMD              0x4B2
+#define REG_RC_RESULT           0x4B3
+#define REG_RC_LEN              0x4B8
+#define REG_RC_OFFSET           0x4BC
+#define REG_RC_DATA             0x4C0
+
+#define REG_VENDOR_ID           0x500
+#define REG_CHIP_ID             0x507
+#define REG_FIRMWARE_VERSIOIN   0x50A
+
+typedef enum {
+    UPDC_COMMAND_SUCCESS = 0,
+    UPDC_COMMAND_INVALID,
+    UPDC_COMMAND_UNSUPPORT,
+    UPDC_COMMAND_FAILED,
+    UPDC_COMMAND_DISABLED,
+}RC_STATUS;
+
+typedef enum {
+    UPDC_ENABLE_RC = 1,
+    UPDC_DISABLE_RC,
+    UPDC_GET_ID,
+    UPDC_GET_VERSION,
+    UPDC_ENABLE_FLASH_CHIP_ERASE = 8,
+    UPDC_CAL_EEPROM_CHECKSUM = 0X11,
+    UPDC_FLASH_ERASE = 0X14,
+    UPDC_CAL_EEPROM_CHECK_CRC8 = 0X16,
+    UPDC_CAL_EEPROM_CHECK_CRC16,
+    UPDC_WRITE_TO_EEPROM = 0X20,
+    UPDC_READ_FROM_EEPROM = 0X30,
+}RC_COMMAND;
+
+unsigned char
+synapticsmst_common_read_dpcd(int offset, int *buf, int length);
+
+unsigned char
+synapticsmst_common_write_dpcd(int offset, int *buf, int length);
+
+unsigned char
+synapticsmst_common_open_aux_node(const char* filename);
+
+void
+synapticsmst_common_close_aux_node(void);
+
+unsigned char
+synapticsmst_common_rc_set_command(int rc_cmd, int length, int offset, unsigned char *buf);
+
+unsigned char
+synapticsmst_common_rc_get_command(int rc_cmd, int length, int offset, unsigned char *buf);
+
+unsigned char
+synapticsmst_common_rc_special_get_command(int rc_cmd, int cmd_length, int cmd_offset, unsigned char *cmd_data, int length, unsigned char *buf);
+
+#endif /* __SYNAPTICSMST_COMMON_H */
