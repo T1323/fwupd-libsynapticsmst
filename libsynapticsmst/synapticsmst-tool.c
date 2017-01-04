@@ -159,6 +159,27 @@ synapticsmst_tool_get_descriptions (GPtrArray *array)
 }
 
 static gboolean
+synapticsmst_tool_scan_aux_nodes (SynapticsMSTToolPrivate *priv, GError **error)
+{
+	gboolean nRet = FALSE;
+	priv->device_array = g_ptr_array_new();
+	for (guint8 i=0; i<MAX_DP_AUX_NODES; i++) {
+		if (synapticsmst_common_open_aux_node(synapticsmst_device_get_aux_node(i))) {
+			g_autoptr(SynapticsMSTDevice) device = synapticsmst_device_new(SYNAPTICSMST_DEVICE_KIND_DIRECT, synapticsmst_device_get_aux_node(i));
+			g_ptr_array_add(priv->device_array, g_object_ref(device));
+			synapticsmst_common_close_aux_node();
+			nRet = TRUE;
+		}
+	}
+
+	if (!nRet) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "No Synaptics MST Device Found!\n");
+	}
+
+	return nRet;
+}
+
+static gboolean
 synapticsmst_tool_enumerate (SynapticsMSTToolPrivate *priv, gchar **values, guint8 device_index, GError **error)
 {
 	SynapticsMSTDevice *device = NULL;
@@ -187,6 +208,7 @@ synapticsmst_tool_enumerate (SynapticsMSTToolPrivate *priv, gchar **values, guin
 	}
 	return TRUE;
 }
+
 static gboolean
 synapticsmst_tool_flash (SynapticsMSTToolPrivate *priv, gchar **values, guint8 device_index, GError **error)
 {
@@ -331,13 +353,10 @@ main (int argc, char **argv)
 		g_setenv ("G_MESSAGES_DEBUG", "all", FALSE);
 
     /* check avaliable dp aux nodes and add devices */
-	priv->device_array = g_ptr_array_new();
-	for (guint8 i=0; i<MAX_DP_AUX_NODES; i++) {
-		if (synapticsmst_common_open_aux_node(synapticsmst_device_get_aux_node(i))) {
-			g_autoptr(SynapticsMSTDevice) device = synapticsmst_device_new(SYNAPTICSMST_DEVICE_KIND_DIRECT, synapticsmst_device_get_aux_node(i));
-			g_ptr_array_add(priv->device_array, g_object_ref(device));
-			synapticsmst_common_close_aux_node();
-		}
+	ret = synapticsmst_tool_scan_aux_nodes(priv, &error);
+	if (!ret) {
+		g_print("%s\n", error->message);
+		return EXIT_FAILURE;
 	}
 	
 	/* run the specified command */
