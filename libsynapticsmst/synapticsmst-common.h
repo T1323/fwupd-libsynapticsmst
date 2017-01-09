@@ -2,6 +2,7 @@
  *
  * Copyright (C) 2015 Richard Hughes <richard@hughsie.com>
  * Copyright (C) 2016 Mario Limonciello <mario.limonciello@dell.com>
+ * Copyright (C) 2017 Peichen Huang <peichenhuang@tw.synaptics.com>
  *
  * Licensed under the GNU Lesser General Public License Version 2.1
  *
@@ -23,7 +24,6 @@
 #ifndef __SYNAPTICSMST_COMMON_H
 #define __SYNAPTICSMST_COMMON_H
 
-//#include <glib.h>
 #define ADDR_CUSTOMER_ID        0X10E
 #define ADDR_BOARD_ID           0x10F
 
@@ -38,6 +38,12 @@
 #define REG_VENDOR_ID           0x500
 #define REG_CHIP_ID             0x507
 #define REG_FIRMWARE_VERSIOIN   0x50A
+
+typedef enum {
+    DPCD_SUCCESS = 0,
+    DPCD_SEEK_FAIL,
+    DPCD_ACCESS_FAIL,
+}dpcd_return;
 
 typedef enum {
     UPDC_COMMAND_SUCCESS = 0,
@@ -58,20 +64,25 @@ typedef enum {
     UPDC_CAL_EEPROM_CHECK_CRC8 = 0X16,
     UPDC_CAL_EEPROM_CHECK_CRC16,
     UPDC_WRITE_TO_EEPROM = 0X20,
-    UPDC_READ_FROM_EEPROM = 0X30,
+    UPDC_WRITE_TO_TX_DPCD = 0x22,
+    UPDC_READ_FROM_EEPROM = 0x30,
+    UPDC_READ_FROM_TX_DPCD = 0x32,
 }RC_COMMAND;
+
+int
+synapticsmst_common_open_aux_node(const char* filename);
+
+void
+synapticsmst_common_close_aux_node(void);
+
+void
+synapticsmst_common_config_connection(unsigned char layer, unsigned int RAD);
 
 unsigned char
 synapticsmst_common_read_dpcd(int offset, int *buf, int length);
 
 unsigned char
 synapticsmst_common_write_dpcd(int offset, int *buf, int length);
-
-unsigned char
-synapticsmst_common_open_aux_node(const char* filename);
-
-void
-synapticsmst_common_close_aux_node(void);
 
 unsigned char
 synapticsmst_common_rc_set_command(int rc_cmd, int length, int offset, unsigned char *buf);
@@ -82,4 +93,9 @@ synapticsmst_common_rc_get_command(int rc_cmd, int length, int offset, unsigned 
 unsigned char
 synapticsmst_common_rc_special_get_command(int rc_cmd, int cmd_length, int cmd_offset, unsigned char *cmd_data, int length, unsigned char *buf);
 
+unsigned char
+synapticsmst_common_enable_remote_control(void);
+
+unsigned char
+synapticsmst_common_disable_remote_control(void);
 #endif /* __SYNAPTICSMST_COMMON_H */

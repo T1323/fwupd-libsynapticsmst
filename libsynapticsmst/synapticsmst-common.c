@@ -2,6 +2,7 @@
  *
  * Copyright (C) 2015 Richard Hughes <richard@hughsie.com>
  * Copyright (C) 2016 Mario Limonciello <mario.limonciello@dell.com>
+ * Copyright (C) 2017 Peichen Huang <peichenhuang@tw.synaptics.com>
  *
  * Licensed under the GNU Lesser General Public License Version 2.1
  *
@@ -26,81 +27,121 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <time.h>
-//#include <string.h>
 #include <stdlib.h>
 #include "synapticsmst-common.h"
 
 #define UNIT_SIZE       32
-#define MAX_WAIT_TIME   3  // second
+#define MAX_WAIT_TIME   3  /* unit : second */
 
-typedef enum {
-    DPCD_SUCCESS = 0,
-    DPCD_SEEK_FAIL,
-    DPCD_ACCESS_FAIL,
-}dpcd_return;
+int g_fd = 0;
+unsigned char g_layer = 0;
+unsigned char g_remain_layer = 0;
+unsigned int g_RAD = 0;
 
-int fd = 0;
-
-unsigned char
-synapticsmst_common_read_dpcd(int offset, int *buf, int length) 
+static unsigned char
+synapticsmst_common_aux_node_read (int offset, int *buf, int length)
 {
-    if (lseek(fd, offset, SEEK_SET) != offset) {
-    //    printf("dpcd read fail in finding address %05x\n", offset);
+    if (lseek (g_fd, offset, SEEK_SET) != offset) {
         return DPCD_SEEK_FAIL;
     }
-    
-    if (read(fd, buf, length) != length) {
-    //    printf("dpcd read fail reading from address %05x\n", offset);
+
+    if (read (g_fd, buf, length) != length) {
         return DPCD_ACCESS_FAIL;
     }
 
     return DPCD_SUCCESS;
 }
 
-unsigned char
-synapticsmst_common_write_dpcd(int offset, int *buf, int length) 
+static unsigned char
+synapticsmst_common_aux_node_write (int offset, int *buf, int length)
 {
-    if (lseek(fd, offset, SEEK_SET) != offset) {
-    //    printf("dpcd write fail in finding address %05x\n", offset);
+    if (lseek (g_fd, offset, SEEK_SET) != offset) {
         return DPCD_SEEK_FAIL;
     }
-    
-    if (write(fd, buf, length) != length) {
-    //    printf("dpcd write fail in writing to address %05x\n", offset);
+
+    if (write (g_fd, buf, length) != length) {
         return DPCD_ACCESS_FAIL;
     }
 
     return DPCD_SUCCESS;
 }
 
-
-unsigned char
-synapticsmst_common_open_aux_node(const char* filename) 
+int
+synapticsmst_common_open_aux_node (const char* filename)
 {
     unsigned char byte[4];
-    fd = open(filename, O_RDWR);
+    g_fd = open (filename, O_RDWR);
 
-    if (synapticsmst_common_read_dpcd(REG_RC_CAP, (int *)byte, 1) == DPCD_SUCCESS) {
-        if (byte[0] & 0x04) {
-            synapticsmst_common_read_dpcd(REG_VENDOR_ID, (int *)byte, 3);
-            if (byte[0] == 0x90 && byte[1] == 0xCC && byte[2] == 0x24) {
-                return 1;
+    if (g_fd != -1) {
+        if (synapticsmst_common_aux_node_read (REG_RC_CAP, (int *)byte, 1) == DPCD_SUCCESS) {
+            if (byte[0] & 0x04) {
+                synapticsmst_common_aux_node_read (REG_VENDOR_ID, (int *)byte, 3);
+                if (byte[0] == 0x90 && byte[1] == 0xCC && byte[2] == 0x24) {
+                    return 1;
+                }
             }
         }
     }
+    else {
+        /* can't open aux node, try use sudo to get the permission */
+        return -1;
+    }
 
-    fd = 0;
+
+    g_fd = 0;
     return 0;
 }
 
 void
-synapticsmst_common_close_aux_node(void) 
+synapticsmst_common_close_aux_node (void)
 {
-    close(fd);
+    close (g_fd);
+}
+
+void
+synapticsmst_common_config_connection (unsigned char layer, unsigned int RAD)
+{
+    g_layer = layer;
+    g_remain_layer = g_layer;
+    g_RAD = RAD;
 }
 
 unsigned char
-synapticsmst_common_rc_set_command(int rc_cmd, int length, int offset, unsigned char *buf)
+synapticsmst_common_read_dpcd (int offset, int *buf, int length)
+{
+    if (g_layer && g_remain_layer) {
+        unsigned char nRet, node;
+
+        g_remain_layer--;
+        node = (g_RAD >> g_remain_layer * 2) & 0x03;
+        nRet =  synapticsmst_common_rc_get_command (UPDC_READ_FROM_TX_DPCD + node, length, offset, (unsigned char *)buf);
+        g_remain_layer++;
+        return nRet;
+    }
+    else {
+        return synapticsmst_common_aux_node_read (offset, buf, length);
+    }
+}
+
+unsigned char
+synapticsmst_common_write_dpcd (int offset, int *buf, int length)
+{
+    if (g_layer && g_remain_layer) {
+        unsigned char nRet, node;
+
+        g_remain_layer--;
+        node = (g_RAD >> g_remain_layer * 2) & 0x03;
+        nRet =  synapticsmst_common_rc_set_command (UPDC_WRITE_TO_TX_DPCD + node, length, offset, (unsigned char *)buf);
+        g_remain_layer++;
+        return nRet;
+    }
+    else {
+        return synapticsmst_common_aux_node_write (offset, buf, length);
+    }
+}
+
+unsigned char
+synapticsmst_common_rc_set_command (int rc_cmd, int length, int offset, unsigned char *buf)
 {
     unsigned char nRet = 0;
     int cur_offset = offset;
@@ -120,46 +161,45 @@ synapticsmst_common_rc_set_command(int rc_cmd, int length, int offset, unsigned 
         }
 
         if (cur_length) {
-            // write data
-            nRet = synapticsmst_common_write_dpcd(REG_RC_DATA, (int *)buf, cur_length);
+            /* write data */
+            nRet = synapticsmst_common_write_dpcd (REG_RC_DATA, (int *)buf, cur_length);
             if (nRet) {
                 break;
             }
 
-            //write offset
-            nRet = synapticsmst_common_write_dpcd(REG_RC_OFFSET, &cur_offset, 4);
+            /* write offset */
+            nRet = synapticsmst_common_write_dpcd (REG_RC_OFFSET, &cur_offset, 4);
             if (nRet) {
                 break;
             }
 
-            // write length
-            nRet = synapticsmst_common_write_dpcd(REG_RC_LEN, &cur_length, 4);
+            /* write length */
+            nRet = synapticsmst_common_write_dpcd (REG_RC_LEN, &cur_length, 4);
             if (nRet) {
                 break;
             }
         }
 
-        // send command
+        /* send command */
         cmd = 0x80 | rc_cmd;
-        nRet = synapticsmst_common_write_dpcd(REG_RC_CMD, &cmd, 1);
+        nRet = synapticsmst_common_write_dpcd (REG_RC_CMD, &cmd, 1);
         if (nRet) {
             break;
         }
 
-        // wait command complete
-        clock_gettime(CLOCK_REALTIME, &t_spec);
+        /* wait command complete */
+        clock_gettime (CLOCK_REALTIME, &t_spec);
         deadline = t_spec.tv_sec + MAX_WAIT_TIME;
 
         do {
-            nRet = synapticsmst_common_read_dpcd(REG_RC_CMD, &readData, 2);
-            clock_gettime(CLOCK_REALTIME, &t_spec);
+            nRet = synapticsmst_common_read_dpcd (REG_RC_CMD, &readData, 2);
+            clock_gettime (CLOCK_REALTIME, &t_spec);
             if (t_spec.tv_sec > deadline) {
                 nRet = -1;
             }
-        }while(nRet == 0 && readData & 0x80);
+        }while (nRet == 0 && readData & 0x80);
 
         if (nRet) {
-        //    printf("checking result timeout\n");
             break;
         }
         else if (readData & 0xFF00) {
@@ -170,13 +210,13 @@ synapticsmst_common_rc_set_command(int rc_cmd, int length, int offset, unsigned 
         buf += cur_length;
         cur_offset += cur_length;
         data_left -= cur_length;
-    }while(data_left);
+    }while (data_left);
 
     return nRet;
 }
 
 unsigned char
-synapticsmst_common_rc_get_command(int rc_cmd, int length, int offset, unsigned char *buf) 
+synapticsmst_common_rc_get_command (int rc_cmd, int length, int offset, unsigned char *buf)
 {
     unsigned char nRet = 0;
     int cur_offset = offset;
@@ -196,40 +236,39 @@ synapticsmst_common_rc_get_command(int rc_cmd, int length, int offset, unsigned 
         }
 
         if (cur_length) {
-            //write offset
-            nRet = synapticsmst_common_write_dpcd(REG_RC_OFFSET, &cur_offset, 4);
+            /* write offset */
+            nRet = synapticsmst_common_write_dpcd (REG_RC_OFFSET, &cur_offset, 4);
             if (nRet) {
                 break;
             }
 
-            // write length
-            nRet = synapticsmst_common_write_dpcd(REG_RC_LEN, &cur_length, 4);
+            /* write length */
+            nRet = synapticsmst_common_write_dpcd (REG_RC_LEN, &cur_length, 4);
             if (nRet) {
                 break;
             }
         }
 
-        // send command
+        /* send command */
         cmd = 0x80 | rc_cmd;
-        nRet = synapticsmst_common_write_dpcd(REG_RC_CMD, &cmd, 1);
+        nRet = synapticsmst_common_write_dpcd (REG_RC_CMD, &cmd, 1);
         if (nRet) {
             break;
         }
 
-        // wait command complete
-        clock_gettime(CLOCK_REALTIME, &t_spec);
+        /* wait command complete */
+        clock_gettime (CLOCK_REALTIME, &t_spec);
         deadline = t_spec.tv_sec + MAX_WAIT_TIME;
 
         do {
-            nRet = synapticsmst_common_read_dpcd(REG_RC_CMD, &readData, 2);
-            clock_gettime(CLOCK_REALTIME, &t_spec);
+            nRet = synapticsmst_common_read_dpcd (REG_RC_CMD, &readData, 2);
+            clock_gettime (CLOCK_REALTIME, &t_spec);
             if (t_spec.tv_sec > deadline) {
                 nRet = -1;
             }
         }while(nRet == 0 && readData & 0x80);
 
         if (nRet) {
-        //    printf("checking result timeout\n");
             break;
         }
         else if (readData & 0xFF00) {
@@ -238,7 +277,7 @@ synapticsmst_common_rc_get_command(int rc_cmd, int length, int offset, unsigned 
         }
 
         if (cur_length) {
-            nRet = synapticsmst_common_read_dpcd(REG_RC_DATA, (int *)buf, cur_length);
+            nRet = synapticsmst_common_read_dpcd (REG_RC_DATA, (int *)buf, cur_length);
             if (nRet) {
                 break;
             }
@@ -253,7 +292,7 @@ synapticsmst_common_rc_get_command(int rc_cmd, int length, int offset, unsigned 
 }
 
 unsigned char
-synapticsmst_common_rc_special_get_command(int rc_cmd, int cmd_length, int cmd_offset, unsigned char *cmd_data, int length, unsigned char *buf)
+synapticsmst_common_rc_special_get_command (int rc_cmd, int cmd_length, int cmd_offset, unsigned char *cmd_data, int length, unsigned char *buf)
 {
     unsigned char nRet = 0;
     int readData = 0;
@@ -263,48 +302,47 @@ synapticsmst_common_rc_special_get_command(int rc_cmd, int cmd_length, int cmd_o
 
     do {
         if (cmd_length) {
-            // write cmd data
+            /* write cmd data */
             if (cmd_data != NULL) {
-                nRet = synapticsmst_common_write_dpcd(REG_RC_DATA, cmd_data, cmd_length);
+                nRet = synapticsmst_common_write_dpcd (REG_RC_DATA, (int *)cmd_data, cmd_length);
                 if (nRet) {
                     break;
                 }
             }
 
-            // write offset
-            nRet = synapticsmst_common_write_dpcd(REG_RC_OFFSET, &cmd_offset, 4);
+            /* write offset */
+            nRet = synapticsmst_common_write_dpcd (REG_RC_OFFSET, &cmd_offset, 4);
             if (nRet) {
                 break;
             }
 
-            // write length
-            nRet = synapticsmst_common_write_dpcd(REG_RC_LEN, &cmd_length, 4);
+            /* write length */
+            nRet = synapticsmst_common_write_dpcd (REG_RC_LEN, &cmd_length, 4);
             if (nRet) {
                 break;
             }
         }
 
-        // send command
+        /* send command */
         cmd = 0x80 | rc_cmd;
-        nRet = synapticsmst_common_write_dpcd(REG_RC_CMD, &cmd, 1);
+        nRet = synapticsmst_common_write_dpcd (REG_RC_CMD, &cmd, 1);
         if (nRet) {
             break;
         }
 
-        // wait command complete
-        clock_gettime(CLOCK_REALTIME, &t_spec);
+        /* wait command complete */
+        clock_gettime (CLOCK_REALTIME, &t_spec);
         deadline = t_spec.tv_sec + MAX_WAIT_TIME;
 
         do {
-            nRet = synapticsmst_common_read_dpcd(REG_RC_CMD, &readData, 2);
-            clock_gettime(CLOCK_REALTIME, &t_spec);
+            nRet = synapticsmst_common_read_dpcd (REG_RC_CMD, &readData, 2);
+            clock_gettime (CLOCK_REALTIME, &t_spec);
             if (t_spec.tv_sec > deadline) {
                 nRet = -1;
             }
-        }while(nRet == 0 && readData & 0x80);
+        }while (nRet == 0 && readData & 0x80);
 
         if (nRet) {
-        //    printf("checking result timeout\n");
             break;
         }
         else if (readData & 0xFF00) {
@@ -313,12 +351,49 @@ synapticsmst_common_rc_special_get_command(int rc_cmd, int cmd_length, int cmd_o
         }
 
         if (length) {
-            nRet = synapticsmst_common_read_dpcd(REG_RC_DATA, (int *)buf, length);
+            nRet = synapticsmst_common_read_dpcd (REG_RC_DATA, (int *)buf, length);
             if (nRet) {
                 break;
             }
         }
     } while (0);
 
-    return nRet;    
+    return nRet;
+}
+
+unsigned char
+synapticsmst_common_enable_remote_control (void)
+{
+    const char *sc = "PRIUS";
+    unsigned char tmp_layer = g_layer;
+    unsigned char nRet = 0;
+
+    for (int i=0; i<=tmp_layer; i++) {
+        synapticsmst_common_config_connection (i, g_RAD);
+        nRet = synapticsmst_common_rc_set_command (UPDC_ENABLE_RC, 5, 0, (unsigned char*)sc);
+        if (nRet) {
+            break;
+        }
+    }
+
+    synapticsmst_common_config_connection (tmp_layer, g_RAD);
+    return nRet;
+}
+
+unsigned char
+synapticsmst_common_disable_remote_control (void)
+{
+    unsigned char tmp_layer = g_layer;
+    unsigned char nRet = 0;
+
+    for (int i=tmp_layer; i>=0; i--) {
+        synapticsmst_common_config_connection (i, g_RAD);
+        nRet = synapticsmst_common_rc_set_command (UPDC_DISABLE_RC, 0, 0, (unsigned char*)NULL);
+        if (nRet) {
+            break;
+        }
+    }
+
+    synapticsmst_common_config_connection (tmp_layer, g_RAD);
+    return nRet;
 }
